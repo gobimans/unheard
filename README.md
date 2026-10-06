@@ -2,44 +2,105 @@
 
 A Claude skill that finds artists you have never played, using your own Last.fm history instead of Spotify's recommendations.
 
-Spotify recommends what it thinks you like. After ten years of scrobbling that mostly means more of what you already know. This skill reads your full Last.fm history, takes the artists you actually play, looks at who is similar, and removes everyone you have ever scrobbled. What is left gets checked one more time per artist and per track (`userplaycount = 0`) before it reaches you.
+Spotify recommends what it thinks you like. After years of scrobbling that mostly means more of what you already know. Unheard reads your whole Last.fm history, takes the artists you actually play, looks at who is similar, and throws out everyone you have ever scrobbled. Each remaining artist and track is checked once more for zero plays before it reaches you.
 
-## What it does
+## What you can ask
 
-- **Discovery.** New artists, never scrobbled by you. With no theme given, it uses your own last six months of listening as the filter. With a named request (an artist, a genre, an era, a mood), it uses that instead.
-- **Forgotten.** Artists you played 50+ times and have not touched in 12 months.
-- **Loved.** A playlist from artists you already love, for a mood or an evening.
-- **Stats.** Top artists by year, how your taste moved, month-by-month history.
+- "Find me something new to listen to." New artists you have never scrobbled, close to what you play these days.
+- "Something new like Massive Attack" or "new 90s hip-hop for me". The same, around a theme you name.
+- "Artists I used to play all the time and dropped." Artists with 50+ plays and nothing in the last 12 months.
+- "A cozy playlist, only stuff I already love." A mood playlist from your own favourites.
+- "My top artists by year." Statistics from your history.
 
-Output is a table with the artist, a track, which of your artists it is similar to, and global listener count. A Spotify playlist is built from it.
+You get a table: artist, track, which of your artists it is similar to, and how many listeners it has on Last.fm. If Spotify is connected, Claude also creates the playlist in your Spotify library.
 
-## What you need
+## Setup
 
-- Claude (Claude Code, or Claude with skills enabled).
-- A free Last.fm API key: https://www.last.fm/api/account/create
-- Your Last.fm username.
-- Optional: the Spotify connector, for playlists. Without it you still get the table.
+You need a Last.fm account with some listening history. Spotify is optional.
 
-Set two environment variables:
+### Step 1. Turn on code execution in Claude
+
+The skill runs a small script, so Claude needs permission to run code.
+
+1. Open [claude.ai](https://claude.ai) and go to **Settings → Capabilities**.
+2. Turn on **Code execution and file creation**.
+
+On a Team or Enterprise plan, an admin does this in **Organization settings**.
+
+### Step 2. Add the skill to Claude
+
+1. Download [unheard.zip](https://github.com/gobimans/unheard/raw/main/unheard.zip). Do not unzip it.
+2. In Claude, open **Customize → Skills** ([claude.ai/customize/skills](https://claude.ai/customize/skills)).
+3. Press **+**, then **Create skill**, then **Upload a skill**.
+4. Choose `unheard.zip`.
+
+### Step 3. Connect Spotify (optional)
+
+Without Spotify you still get the list of artists and tracks. With it, Claude also makes the playlist for you.
+
+1. In Claude's settings, open **Connectors**.
+2. Find **Spotify**, press **Connect** and log in to your Spotify account.
+
+Spotify's playlist generator needs a Spotify Premium account.
+
+### Step 4. Get your Last.fm API key
+
+This is a free key that lets the script read your listening history. It cannot post anything or change your account.
+
+1. Log in at [last.fm](https://www.last.fm).
+2. Open [last.fm/api/account/create](https://www.last.fm/api/account/create).
+3. Fill in the form:
+   - **Contact email:** your email.
+   - **Application name:** anything, for example `Unheard`.
+   - **Application description:** anything, for example `personal playlists`.
+   - **Callback URL** and **Application homepage:** leave empty.
+4. Press **Submit**.
+5. The next page shows two values: **API key** and **Shared secret**. You need only the **API key**. It is 32 letters and digits.
+
+Lost it? Your keys are listed at [last.fm/api/accounts](https://www.last.fm/api/accounts).
+
+Your **username** is the name at the end of your profile address: last.fm/user/**yourname**.
+
+### Step 5. Ask for music
+
+Start a new chat and write something like "find me something new to listen to".
+
+The first time, Claude asks for your username and API key. Paste them in. Claude checks them, then downloads your history. A long history takes a few minutes, and only the first time. After that it remembers you.
+
+## If something goes wrong
+
+- **"This is not an API key."** You probably copied the Shared secret. Copy the line labelled API key.
+- **"User not found."** Check the spelling of your username in your profile address.
+- **"Your history is hidden."** On last.fm open Settings → Privacy and turn off the option that hides your recent listening.
+- **"Last.fm cannot be reached."** The place where Claude runs code has no internet access to Last.fm. This depends on your Claude plan and settings. Use Claude Code (below) instead.
+- **Claude doesn't use the skill.** Mention Last.fm or your scrobbles in the message, or check that the skill is turned on in Customize → Skills.
+
+## Claude Code
+
+If you use Claude Code in a terminal:
+
+```
+git clone https://github.com/gobimans/unheard
+cp -r unheard/unheard ~/.claude/skills/
+```
+
+Then ask Claude for music as in Step 5. You can also put the credentials in your environment instead of pasting them in chat:
 
 ```
 export LASTFM_API_KEY=your_key
 export LASTFM_USER=your_username
 ```
 
-## Install
+## Good to know
 
-Copy the `unheard/` folder into `~/.claude/skills/`.
-
-The first run downloads your full history month by month and stores it locally (`monthly.json`). It takes a few minutes for a long history, and later runs refresh only the recent months. Everything the skill derives from your account (taste profile, popularity band, thresholds) is built automatically. Nothing is hard-coded to one person.
-
-## Known limits
-
-- Last.fm sees only scrobbles. If you listen to something in Spotify without scrobbling, the skill does not know. Reply with the artists you already knew and they are excluded from later runs.
-- Spotify's playlist generator takes a text prompt, not a track list. It may reorder, swap or drop tracks, and it can add artists you already know. The verified table is the result; the playlist is a convenience copy.
-- Tested on one account (231 months, about 17,700 artists). Forgotten and Loved modes were checked in dry runs. Accounts with under 100 known artists get a reduced mode with low confidence.
+- **Last.fm only sees scrobbles.** If you listened to an artist in Spotify without scrobbling, the skill thinks you never heard them. Tell Claude which artists you already knew and they are excluded next time.
+- **Spotify builds the playlist its own way.** Its generator takes a description, not an exact track list. It can reorder or swap tracks and sometimes adds artists you know. The table Claude gives you is the checked result. The playlist is a convenient copy.
+- **Where your data goes.** Your history is saved as files in a folder named `unheard` (in your connected cloud drive or on your computer, if Claude has access to one), so it is not downloaded again each time. Nothing is sent anywhere except Last.fm and, for playlists, Spotify.
+- **Tested** on one account with 19 years of history (about 17,700 artists). Accounts with fewer than 100 artists get a simpler mode with a warning.
 
 ## Files
 
-- `SKILL.md`: instructions Claude follows.
-- `scripts/lastfm.py`: Last.fm client with caching, retries and the discovery logic. Standard library only.
+- `unheard/SKILL.md`: the instructions Claude follows.
+- `unheard/scripts/lastfm.py`: the Last.fm script (no extra packages needed).
+- `unheard/evals/evals.json`: test prompts used to check the skill.
+- `unheard.zip`: the same folder, packed for uploading to Claude.

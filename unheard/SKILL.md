@@ -3,7 +3,7 @@ name: "unheard"
 description: "Finds artists a user has never listened to by mining their own Last.fm history, builds Spotify playlists (new-artist discovery, forgotten artists, comfort playlists from artists they already love), and analyzes listening statistics. Make sure to use this skill whenever the user mentions Last.fm, scrobbles, Spotify playlists, music recommendations, something new to listen to, artists they stopped playing, a playlist for a mood, or their listening history, even if they do not name Last.fm or ask for a playlist explicitly."
 ---
 
-# Music: Last.fm + Spotify
+# Unheard
 
 Three playlist modes and one analysis mode:
 
@@ -38,10 +38,10 @@ Users may listen to and like music in Spotify without scrobbling it. "Zero scrob
 
 ## Access
 
-- Last.fm username, API key, response language and timezone come from the profile. If the profile does not exist yet, read them from the user's durable memory. If they are in neither place, ask for the missing values (this is the one question for the turn). The API key is read-only and gives access to public data.
+- Last.fm username and API key: from `LASTFM_API_KEY`/`LASTFM_USER` in the environment, else from `credentials.json` in the persistent store (written by `setup`), else from the user's durable memory. If none has them, this is a first run: follow "First run". Response language and timezone come from the profile. The API key is read-only and gives access to public data. Never repeat the key back to the user or print it in a reply.
 - Base URL: `https://ws.audioscrobbler.com/2.0/?method=<m>&api_key=<key>&format=json`, plus `&user=<username>` for `user.*` methods.
 - Call it with `curl` or python urllib from Bash. WebFetch returns 404 on this API. Run at most 4 parallel threads. Retry rules are in "Failure handling".
-- Repetitive work is bundled in `scripts/lastfm.py` (next to this file): `monthly` builds or refreshes `monthly.json`, `profile` builds `profile.json`, `discover` runs Discovery (Steps 1c to 3 plus the Step 1b checks), `loved` runs Loved mode, `forgotten` computes the Forgotten pool, `verify` runs the Step 1b checks on any list. The text of this file is the specification: if a script disagrees with it, fix the script. It reads `LASTFM_API_KEY` and `LASTFM_USER` from the environment, so the key never appears in a command line, and it already applies the 4-thread limit and the retry rules. Use it instead of rewriting the same loops each session. Run a command with `--help` for its options.
+- Repetitive work is bundled in `scripts/lastfm.py` (next to this file): `monthly` builds or refreshes `monthly.json`, `profile` builds `profile.json`, `discover` runs Discovery (Steps 1c to 3 plus the Step 1b checks), `loved` runs Loved mode, `forgotten` computes the Forgotten pool, `verify` runs the Step 1b checks on any list, `setup` checks and saves the username and key. The text of this file is the specification: if a script disagrees with it, fix the script. It reads the credentials from the environment or from `credentials.json` in `--store`, so the key never appears in later command lines, and it already applies the 4-thread limit and the retry rules. Use it instead of rewriting the same loops each session. Run a command with `--help` for its options.
 - Spotify connector tools used: `generate_playlist` and `save_to_library`. No other Spotify tool is used. If they are missing, run ToolSearch "spotify". If still missing, tell the user to enable the Spotify connector in this chat and deliver the track table without a playlist.
 
 ## Spotify rules
@@ -65,6 +65,40 @@ Users may listen to and like music in Spotify without scrobbling it. "Zero scrob
 | Global popularity | artist.getinfo | artist (`stats.listeners`) |
 | Per-user check | artist.getinfo / track.getinfo | add `username=<user>`, `autocorrect=1`; read `userplaycount` |
 | Candidate tracks | artist.gettoptracks | artist |
+
+## First run
+
+A first run is any run with no saved credentials. Assume the user has no technical background: no terminal words, no file names, no jargon in what they read. Write it in the language of their message.
+
+**1. Ask for the two values, with the full instructions, in one message.** This is the one question of the turn. Use this content, in the user's language:
+
+> To read your listening history I need two things from Last.fm.
+>
+> 1. **Your username.** It is the name at the end of your profile address: last.fm/user/**name**. You can also see it in the top right corner of last.fm when you are logged in.
+> 2. **An API key.** It is free and takes a minute:
+>    - Log in at last.fm, then open https://www.last.fm/api/account/create
+>    - Contact email: your email. Application name: anything, for example Unheard. Application description: anything, for example "personal playlists".
+>    - Leave Callback URL and Application homepage empty.
+>    - Press Submit. The next page shows **API key** and **Shared secret**. Copy only the API key (32 letters and digits). The shared secret is not needed.
+>    - If you already made one before, it is listed at https://www.last.fm/api/accounts
+>
+> Paste both here. The key can only read public listening data. It cannot post anything or change your account.
+
+**2. Check and save them.** Run `python scripts/lastfm.py setup --store <working dir> --user <username>` with the key passed on stdin. It answers with one JSON line. On a problem, say what to do in plain words and ask again:
+
+- `key_format`: the pasted value is not an API key. Most often the shared secret was copied instead.
+- `bad_key`: Last.fm does not recognise the key. Ask them to copy the API key again from https://www.last.fm/api/accounts
+- `no_user`: no such username. Ask them to check the name in their profile address.
+- `private_user`: their listening history is hidden. On last.fm: Settings, Privacy, turn off the option that hides recent listening, save, then say "done".
+- `unreachable`: Last.fm cannot be reached from this environment. Tell the user that Claude's sandbox here does not have internet access to Last.fm, so the skill cannot run in this place. Do not loop retries.
+
+**3. Say what happens next, in one line**, using the numbers `setup` returned: "Found your account: N scrobbles since <month year>. Downloading the history now, about M months. A long history takes a few minutes, and only the first time."
+
+**4. Build everything silently:** `monthly`, then `profile`. Save `credentials.json` with the rest of the persistent store (see "Profile and persistence") so the user is never asked again. If only durable memory is available, store the username and key there.
+
+**5. Check Spotify.** If `generate_playlist` is not available after ToolSearch "spotify", tell the user in one line: playlists need the Spotify connector, which they can turn on in Claude's connector settings by choosing Spotify and logging in. Then continue without it: the result comes as a table.
+
+**6. Do what they asked.** If the first message already had a request, run it now. If they only set the skill up, end with one line of what they can ask, for example: "something new for tonight", "artists I used to play and dropped", "a cozy playlist from what I already love", "my top artists by year".
 
 ## Profile and persistence
 
@@ -266,6 +300,7 @@ Off by default (`features.time_patterns.enabled = false` in the profile). It sta
 - v0.1: access and methods.
 - v0.2: discovery pipeline (user-known set, seeds, similarity scoring, support threshold, popularity band), Spotify playlists, feedback loop.
 - v0.3: Last.fm does not see Spotify likes. Added per-finalist checks, self-reported lists, the real Spotify connector limits (generative playlists, mandatory save to library).
+- v0.7 (2026-10-06): renamed to Unheard. First-run onboarding for non-technical users: plain-language guide to getting a Last.fm API key, `setup` command that validates and saves credentials, specific fixes for each setup error.
 - v0.6 (2026-10-06): after the first live playlist, Spotify added a known artist (not in the requested list). Rules now say the verified table is the deliverable, claims about playlist contents are forbidden, and the reply must warn that known artists may appear.
 - v0.5 (2026-10-06): trigger-oriented description, bundled `scripts/lastfm.py` (cache build and refresh, profile build, Discovery, Loved, Forgotten, finalist verification), `evals/evals.json` with three test prompts. Fixes from the first test run: mood words that are barely used as Last.fm tags are mapped to up to three populated tags, and the popularity band is sampled across all of the user's artists with at least 3 plays instead of only the most played.
 - v0.4 (2026-10-06): full rewrite. User-agnostic: history range derived from the registration date, all personal values moved to an auto-built profile, caches persisted outside scratch. Filter split into path A (named request) and path B (own recent-listening cluster). Spotify limited to `generate_playlist` and `save_to_library`. Added Forgotten and Loved modes, second-level similarity, minimum-data gate, failure handling, one-question rule, per-user response language, opt-in time-pattern personalization, and the scrobble-only limitation on the feedback loop.

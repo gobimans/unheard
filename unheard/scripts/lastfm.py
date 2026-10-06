@@ -61,10 +61,14 @@ class LastfmError(Exception):
 
 # --------------------------------------------------------------------------- plumbing
 
-def creds():
+def creds(store="."):
+    """Environment first, then credentials.json in the store (written by the setup command)."""
     key, user = os.environ.get("LASTFM_API_KEY"), os.environ.get("LASTFM_USER")
     if not key or not user:
-        sys.exit("Set LASTFM_API_KEY and LASTFM_USER in the environment.")
+        saved = load_json(os.path.join(store, "credentials.json"), {})
+        key, user = key or saved.get("api_key"), user or saved.get("user")
+    if not key or not user:
+        sys.exit("No Last.fm credentials. Run the setup command first, or set LASTFM_API_KEY and LASTFM_USER.")
     return key, user
 
 
@@ -85,6 +89,15 @@ def api(method, key, **params):
                 return data
         except LastfmError:
             raise
+        except urllib.error.HTTPError as exc:          # Last.fm sends API errors with HTTP 4xx and a JSON body
+            try:
+                body = json.loads(exc.read().decode("utf-8"))
+                err = LastfmError(body["error"], body.get("message", ""))
+            except Exception:
+                err = None
+            if err is not None and err.code in FATAL:
+                raise err
+            last = err or exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last = exc
         if attempt < len(RETRY_WAITS):
@@ -96,7 +109,7 @@ class Ctx:
     """Credentials, store path and a failure counter shared by all calls of one run."""
 
     def __init__(self, store):
-        self.key, self.user = creds()
+        self.key, self.user = creds(store)
         self.store = store
         os.makedirs(store, exist_ok=True)
         self.failed = 0
@@ -676,7 +689,7 @@ def check_one(item, key, user):
 
 
 def cmd_verify(args):
-    key, user = creds()
+    key, user = creds(args.store)
     items = json.load(sys.stdin)
     results = pmap(lambda i: check_one(i, key, user), items)
     print(json.dumps(results, ensure_ascii=False, indent=1))
@@ -718,11 +731,53 @@ def cmd_forgotten(args):
     return 0
 
 
+
+# --------------------------------------------------------------------------- setup
+
+def cmd_setup(args):
+    """Check a username and API key against Last.fm and save them to the store.
+
+    The key is read from stdin so it never appears in a command line or a shell history."""
+    key = sys.stdin.readline().strip()
+    user = args.user.strip()
+    if not re.fullmatch(r"[0-9a-f]{32}", key):
+        print(json.dumps({"ok": False, "problem": "key_format",
+                          "hint": "An API key is 32 characters, letters a-f and digits only. The shared secret is a different value."}))
+        return 1
+    try:
+        info = api("user.getinfo", key, user=user)["user"]
+    except LastfmError as exc:
+        problem = {10: "bad_key", 26: "bad_key", 6: "no_user", 17: "private_user"}.get(exc.code, "lastfm_error")
+        print(json.dumps({"ok": False, "problem": problem, "detail": str(exc)}))
+        return 1
+    except Exception as exc:
+        print(json.dumps({"ok": False, "problem": "unreachable", "detail": str(exc)}))
+        return 1
+    reg = dt.datetime.fromtimestamp(int(info["registered"]["unixtime"]), dt.timezone.utc).date()
+    today = dt.date.today()
+    months = (today.year - reg.year) * 12 + today.month - reg.month + 1
+    os.makedirs(args.store, exist_ok=True)
+    path = os.path.join(args.store, "credentials.json")
+    with open(path, "w") as fh:
+        json.dump({"user": info.get("name", user), "api_key": key}, fh)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    print(json.dumps({"ok": True, "user": info.get("name", user), "registered": reg.isoformat(),
+                      "months": months, "scrobbles": int(info.get("playcount", 0)),
+                      "artists": int(info.get("artist_count", 0) or 0)}))
+    return 0
+
 # --------------------------------------------------------------------------- main
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("setup", help="check and save the Last.fm username and API key (key on stdin)")
+    sp.add_argument("--store", default=".", help="working copy of the persistent store")
+    sp.add_argument("--user", required=True, help="Last.fm username")
+    sp.set_defaults(fn=cmd_setup)
     for name, fn in (("monthly", cmd_monthly), ("profile", cmd_profile), ("discover", cmd_discover),
                      ("loved", cmd_loved), ("verify", cmd_verify), ("forgotten", cmd_forgotten)):
         sp = sub.add_parser(name)
