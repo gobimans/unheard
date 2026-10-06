@@ -4,10 +4,6 @@ A Claude skill that finds artists you have never played, using your own Last.fm 
 
 Spotify recommends what it thinks you like. After years of scrobbling that mostly means more of what you already know. Unheard reads your whole Last.fm history, takes the artists you actually play, looks at who is similar, and throws out everyone you have ever scrobbled. Each remaining artist and track is checked once more for zero plays before it reaches you.
 
-## Web version
-
-No Claude needed: open [gobimans.github.io/unheard](https://gobimans.github.io/unheard), enter your Last.fm username and API key (Step 4 below shows how to get one), and it runs in your browser. Your key and history stay in that browser. Instead of creating a Spotify playlist, each track gets a Spotify link.
-
 ## What you can ask
 
 - "Find me something new to listen to." New artists you have never scrobbled, close to what you play these days.
@@ -108,4 +104,3 @@ export LASTFM_USER=your_username
 - `unheard/scripts/lastfm.py`: the Last.fm script (no extra packages needed).
 - `unheard/evals/evals.json`: test prompts used to check the skill.
 - `unheard.zip`: the same folder, packed for uploading to Claude.
-- `docs/index.html`: the web version (GitHub Pages).
