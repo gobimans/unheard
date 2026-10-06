@@ -1,0 +1,26 @@
+{
+  "skill_name": "unheard",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "discovery-no-theme",
+      "prompt": "make me another playlist with new stuff, i've been scrobbling for years so you should have plenty to work with",
+      "expected_output": "Discovery mode, path B. First line states the mode and the cluster tags taken from the user's own recent listening. No question asked. Every artist has userplaycount 0 for artist and track. Table lists artist, track, similar user artist, global listeners. Playlist created with generate_playlist and saved with save_to_library, with a note that Spotify generated it and the content is unverified. Likes check is the only question.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "eval_name": "forgotten-artists",
+      "prompt": "I want a playlist of artists I used to play constantly and then just dropped. not new stuff, the ones I forgot about",
+      "expected_output": "Forgotten mode, not discovery. No similarity search and no cluster filter. Pool is artists with 50+ plays before the last 12 months and none inside it. Table lists artist, track, total plays, last played month. Tracks come from the user's own most played. Playlist created and saved.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "eval_name": "loved-comfort",
+      "prompt": "rough week, need something cozy tonight. only things I already love, nothing new please",
+      "expected_output": "Loved mode. The word 'cozy' is treated as a Last.fm tag, pool limited to artists above the loved threshold or self-reported likes. No newness check, no similarity search for new artists. Table lists artist, track, user's plays. Playlist created and saved. No multi-part questionnaire.",
+      "files": []
+    }
+  ]
+}
