@@ -91,6 +91,22 @@ export LASTFM_API_KEY=your_key
 export LASTFM_USER=your_username
 ```
 
+## Exact Spotify playlists (optional, advanced)
+
+The skill makes playlists with Claude's Spotify connector, which builds them from a description and may swap tracks. If you run the skill locally in Claude Code and have your own Spotify app, `contrib/spotify_export.py` adds exactly the tracks Unheard found:
+
+```
+python3 unheard/scripts/lastfm.py discover --store DIR --needed 24 | python3 contrib/spotify_export.py --store DIR --name "Unheard"
+```
+
+It needs a Client ID from [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) with the redirect URI `http://127.0.0.1:8888/callback`. Spotify limits such apps to 5 users and requires Premium for the owner, so this is for your own account, not for sharing. Setup details are at the top of the script.
+
+## Tests
+
+```
+python3 -m unittest discover -s tests -v
+```
+
 ## Good to know
 
 - **Last.fm only sees scrobbles.** If you listened to an artist in Spotify without scrobbling, the skill thinks you never heard them. Tell Claude which artists you already knew and they are excluded next time.
@@ -104,3 +120,5 @@ export LASTFM_USER=your_username
 - `unheard/scripts/lastfm.py`: the Last.fm script (no extra packages needed).
 - `unheard/evals/evals.json`: test prompts used to check the skill.
 - `unheard.zip`: the same folder, packed for uploading to Claude.
+- `contrib/spotify_export.py`: optional exact-playlist export (see above).
+- `tests/`: unit tests, standard library only.
