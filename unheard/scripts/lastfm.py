@@ -25,6 +25,7 @@ import datetime as dt
 import json
 import math
 import os
+import random
 import re
 import sys
 import time
@@ -37,9 +38,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 BASE = "https://ws.audioscrobbler.com/2.0/"
 THREADS = 4
-RETRY_WAITS = (2, 5, 15)           # seconds; three retries
+RETRY_WAITS = (2, 5, 15)           # seconds; three retries, each with +-20% jitter
+RETRY_AFTER_CAP = 60               # longest wait honoured from a Retry-After header, seconds
 TRANSIENT = {8, 11, 16, 29}        # operation failed, offline, temporary, rate limit
 FATAL = {4, 6, 10, 17, 26}         # auth and parameter errors: never retry
+TRANSIENT_HTTP = {429, 500, 502, 503, 504}
+_sleep = time.sleep                # replaced in tests
 
 # Generic algorithm defaults. They are copied into profile.json, which is where they are edited
 # (put overrides under "overrides" in profile.json). Derived values come from the user's own data.
@@ -72,21 +76,33 @@ def creds(store="."):
     return key, user
 
 
+def _retry_after(exc):
+    """Seconds from a Retry-After header (numeric form only), capped; None if absent or unparseable."""
+    try:
+        value = float(exc.headers.get("Retry-After"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return max(0.0, min(value, RETRY_AFTER_CAP))
+
+
 def api(method, key, **params):
-    """One Last.fm call with retries on transient errors only."""
+    """One Last.fm call. Retries only transient failures, with jittered backoff.
+
+    Retried: Last.fm codes in TRANSIENT, HTTP 429 and 5xx (with or without a JSON body), network errors.
+    Raised at once: Last.fm codes outside TRANSIENT, and any other HTTP 4xx."""
     query = urllib.parse.urlencode({"method": method, "api_key": key, "format": "json", **params})
     last = None
     for attempt in range(len(RETRY_WAITS) + 1):
+        wait = None
         try:
             with urllib.request.urlopen(f"{BASE}?{query}", timeout=30) as resp:
                 data = json.load(resp)
-            if "error" in data:
-                err = LastfmError(data["error"], data.get("message", ""))
-                if err.code in FATAL:
-                    raise err
-                last = err
-            else:
+            if "error" not in data:
                 return data
+            err = LastfmError(data["error"], data.get("message", ""))
+            if err.code not in TRANSIENT:
+                raise err
+            last = err
         except LastfmError:
             raise
         except urllib.error.HTTPError as exc:          # Last.fm sends API errors with HTTP 4xx and a JSON body
@@ -95,13 +111,17 @@ def api(method, key, **params):
                 err = LastfmError(body["error"], body.get("message", ""))
             except Exception:
                 err = None
-            if err is not None and err.code in FATAL:
+            if err is not None and err.code not in TRANSIENT:
                 raise err
+            if err is None and exc.code not in TRANSIENT_HTTP:
+                raise
             last = err or exc
+            if exc.code == 429:
+                wait = _retry_after(exc)
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last = exc
         if attempt < len(RETRY_WAITS):
-            time.sleep(RETRY_WAITS[attempt])
+            _sleep(wait if wait is not None else RETRY_WAITS[attempt] * random.uniform(0.8, 1.25))
     raise last
 
 
