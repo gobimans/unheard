@@ -185,11 +185,10 @@ class Spotify:
         return None
 
     def create(self, name, description, uris, public=False):
-        me = self.call("GET", "/me")
-        pl = self.call("POST", f"/users/{urllib.parse.quote(me['id'])}/playlists",
-                       {"name": name, "description": description, "public": public})
+        # February 2026 Web API: /me/playlists and /playlists/{id}/items (the old /tracks returns 403)
+        pl = self.call("POST", "/me/playlists", {"name": name, "description": description, "public": public})
         for i in range(0, len(uris), BATCH):
-            self.call("POST", f"/playlists/{pl['id']}/tracks", {"uris": uris[i:i + BATCH]})
+            self.call("POST", f"/playlists/{pl['id']}/items", {"uris": uris[i:i + BATCH]})
         return pl
 
 

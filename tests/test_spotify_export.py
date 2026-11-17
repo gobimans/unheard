@@ -61,10 +61,10 @@ class Create(unittest.TestCase):
         sp = FakeSpotify([])
         uris = [f"spotify:track:{i}" for i in range(150)]
         pl = sp.create("Unheard", "desc", uris)
-        adds = [c for c in sp.calls if c[1] == "/playlists/pl1/tracks"]
+        adds = [c for c in sp.calls if c[1] == "/playlists/pl1/items"]
         self.assertEqual([len(c[2]["uris"]) for c in adds], [100, 50])
         self.assertEqual(pl["id"], "pl1")
-        made = [c for c in sp.calls if c[1] == "/users/me/playlists"][0]
+        made = [c for c in sp.calls if c[1] == "/me/playlists"][0]
         self.assertEqual(made[2], {"name": "Unheard", "description": "desc", "public": False})
 
 
