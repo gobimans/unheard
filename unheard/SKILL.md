@@ -42,13 +42,16 @@ Users may listen to and like music in Spotify without scrobbling it. "Zero scrob
 - Base URL: `https://ws.audioscrobbler.com/2.0/?method=<m>&api_key=<key>&format=json`, plus `&user=<username>` for `user.*` methods.
 - Call it with `curl` or python urllib from Bash. WebFetch returns 404 on this API. Run at most 4 parallel threads. Retry rules are in "Failure handling".
 - Repetitive work is bundled in `scripts/lastfm.py` (next to this file): `monthly` builds or refreshes `monthly.json`, `profile` builds `profile.json`, `discover` runs Discovery (Steps 1c to 3 plus the Step 1b checks), `loved` runs Loved mode, `forgotten` computes the Forgotten pool, `verify` runs the Step 1b checks on any list, `setup` checks and saves the username and key. The text of this file is the specification: if a script disagrees with it, fix the script. It reads the credentials from the environment or from `credentials.json` in `--store`, so the key never appears in later command lines, and it already applies the 4-thread limit and the retry rules. Use it instead of rewriting the same loops each session. Run a command with `--help` for its options.
-- Spotify connector tools used: `generate_playlist` and `save_to_library`. No other Spotify tool is used. If they are missing, run ToolSearch "spotify". If still missing, tell the user to enable the Spotify connector in this chat and deliver the track table without a playlist.
+- Spotify: playlists are written through the Spotify Web API with `scripts/spotify.py` (next to this file; if it is missing there, copy `spotify.py` from the persistent store). It uses the user's own Spotify Development Mode app with Authorization Code + PKCE, so no client secret exists. State is `spotify.json` in `--store`: client id, refresh token, access token. `fill` finds each track, writes the list in order, reads the playlist back and reports whether the readback matches. `read` returns a playlist's contents. The Spotify connector (`generate_playlist`, `save_to_library`) is a fallback only, used when `spotify.json` is absent or the user declines the Web API setup.
 
 ## Spotify rules
 
-- `generate_playlist` is generative. It takes a natural-language prompt plus a `language` parameter and cannot accept an explicit track list. It may reorder, swap or drop tracks, and it may shorten the title. Tell the user this. Never claim the playlist contains exactly the requested tracks, and never state that a given artist is or is not in it. No tool returns a playlist's contents, so the result cannot be verified from here. The generator personalizes from the user's own Spotify listening, so it can add artists the user already knows, including artists from their Last.fm history. The verified table, not the generated playlist, is the deliverable of Discovery mode.
-- A generated playlist is not in the user's library. Right after creation, call `save_to_library` with the returned `spotify:playlist:` URI. Otherwise the user will not see it.
-- Spotify `search` is never used: not for single artists, not for bulk checks, not for track resolution, not for liked-song lookups. It cannot return track lists, and bulk queries create stray generative playlists that cannot be deleted from here. `remove_from_library`, `get_currently_playing` and any playback control are also out of scope.
+- Default path: `python scripts/spotify.py fill --store <working dir> --name "<name>" --description "<text>"` (or `--playlist <id>` to fill an existing one), with a JSON list of `{"artist","track","fallback":[...]}` on stdin. Put 1-2 reserve candidates from the same run into `fallback` so a track missing from Spotify is replaced by a verified-new artist, never by a guess. The playlist is created by the user's account and appears in their library without `save_to_library`.
+- The deliverable is the readback. Report it: what was written, what matched exactly, what was replaced by another track of the same artist or by a fallback, what is missing from Spotify. Claim exact contents only when `readback_matches` is true.
+- Spotify rotates the refresh token on every refresh, and `spotify.json` changes after any call. Copy it back to the persistent store at the end of every run that touched Spotify (see "Profile and persistence"), or the next conversation cannot authenticate.
+- Web API endpoints follow the February 2026 rules: `/playlists/{id}/items` (the old `/tracks` returns 403), `/me/playlists` for creation, search at most 10 results per call. Development Mode needs the app owner to have Premium, allows 5 users and one client id per developer, and authorization expires 6 months after the user first approved it; `spotify.json` holds `authorized` to compute that date.
+- Fallback path (connector) only: `generate_playlist` is a generative tool that takes a natural-language prompt and may drop, swap or reorder tracks, or create an empty playlist for rare artists. It cannot be verified from here. If it is used, say so, never claim its contents, and call `save_to_library` with the returned URI. Connector `search` is never used.
+- `remove_from_library`, `get_currently_playing` and any playback control are out of scope.
 - "Has this user already heard this artist" is answered only by Last.fm `userplaycount` and by the user's own self-reported lists. Spotify likes, followed artists and history cannot be read in bulk. They enter this skill's data only when the user names them (Step 5).
 - Failure behavior is defined in "Failure handling". There is no search-based workaround.
 
@@ -96,7 +99,13 @@ A first run is any run with no saved credentials. Assume the user has no technic
 
 **4. Build everything silently:** `monthly`, then `profile`. Save `credentials.json` with the rest of the persistent store (see "Profile and persistence") so the user is never asked again. If only durable memory is available, store the username and key there.
 
-**5. Check Spotify.** If `generate_playlist` is not available after ToolSearch "spotify", tell the user in one line: playlists need the Spotify connector, which they can turn on in Claude's connector settings by choosing Spotify and logging in. Then continue without it: the result comes as a table.
+**5. Set up Spotify (one time).** Exact playlists need the user's own Spotify app. Send these steps in plain words, in the user's language:
+
+> 1. Open developer.spotify.com/dashboard and press **Create app**.
+> 2. App name: anything, for example Unheard. Description: anything. Redirect URI: `http://127.0.0.1:8888/callback`, press **Add**. Under "Which API/SDKs" tick **Web API**. Accept the terms and **Save**.
+> 3. Open **Settings** and paste the **Client ID** here. The client secret is not needed.
+
+Then run `spotify.py auth-url --client-id <id>` and send the returned link. Tell the user: press Agree; the browser then opens a 127.0.0.1 page that fails to load, which is expected; copy the whole address from the address bar and paste it here within a few minutes. Run `spotify.py auth-code --url <pasted>`. It returns the account name and the date by which to re-authorize. The app needs Spotify Premium on the user's account. If the user declines or has no Premium, fall back to the connector (`generate_playlist`) and say its playlists are approximate.
 
 **6. Do what they asked.** If the first message already had a request, run it now. If they only set the skill up, end with one line of what they can ask, for example: "something new for tonight", "artists I used to play and dropped", "a cozy playlist from what I already love", "my top artists by year".
 
@@ -106,7 +115,7 @@ The profile is built automatically on first run from the user's own data and is 
 
 **Where things are kept** (first available option; say once, in one line, where they went):
 
-1. A folder named `unheard` in the user's connected cloud drive.
+1. A folder named `unheard` in the user's connected cloud drive. With a drive connector that cannot overwrite file content, write a changed file as a new file of the same name in that folder, then trash the older copy; when reading, take the most recently modified file of each name.
 2. A folder on the user's linked computer.
 3. The user's durable memory, for the profile and the small lists only. Caches are too large for it, so with this option the caches stay in scratch and the user is told they will be rebuilt next conversation.
 
@@ -116,6 +125,9 @@ The profile is built automatically on first run from the user's own data and is 
 - `monthly.json`: month -> {artist: plays}, from the registration month onward. `monthly.meta.json` beside it holds the registration date and the last refresh month.
 - `tags_cache.json`: artist -> top tags, so tags are never fetched twice.
 - `history.csv`: per-scrobble history, only if the time-pattern feature is enabled (see "Opt-in: time-pattern personalization").
+- `spotify.json`: Spotify client id and tokens. Rewritten after every run that touched Spotify.
+- `spotify.py`: a copy of the script, so a session without the bundled script still works.
+- `external_pool.json`: candidates gathered from external sources (see "External pools") that passed the Last.fm checks but were not used yet, with source and date. Reused before gathering again; entries older than 60 days are rechecked with Step 1b.
 
 **Where the small lists live:** the user's durable memory (self-reported "heard outside Last.fm" artists, explicitly rejected artists, a playlist log of date, name, mode and artists). If memory is unavailable, they go in `profile.json`. Recognize these lists by meaning, not by exact label wording. Before running `discover` or `loved`, write them into the working directory as JSON arrays of artist names: `liked_outside.json`, `rejected.json`, `playlist_log.json`.
 
@@ -212,8 +224,8 @@ Run `python scripts/lastfm.py discover --store <working dir> --needed <n>` for t
 - One track per artist (two for the top three): `artist.gettoptracks` number 1 or 2. Skip remixes, live versions and intros.
 - Order: open with the three strongest matches, keep neighbouring tracks close in tempo and mood, avoid two similar-sounding artists back to back.
 - Playlist name: short and specific, no clichés. Format `<Theme> · <playlist_tag> <yyyy-mm>`, in the response language. The connector may shorten it. The description names 3-4 of the user's own artists it was built from.
-- Create it with `generate_playlist` (one prompt, `language` taken from `response_language`, tracks as `Artist — Track`), then `save_to_library` with the returned URI.
-- Reply with a table: artist | track | which of the user's artists it is similar to (show the chain for second-level picks) | global listeners. Present the table as the verified result. State that Spotify generated the playlist, that its content is unverified, and that it may contain tracks or artists the user already knows. If the user reports such an artist in the playlist, confirm it plainly without explaining it away, and note that removing it is a manual step in Spotify.
+- Create and fill it with `spotify.py fill` (see "Spotify rules"), then copy `spotify.json` back to the persistent store.
+- Reply with a table built from the readback: artist | track | which of the user's artists it is similar to (show the chain for second-level picks) | global listeners. Below it, one line per deviation (other track of the same artist, fallback artist, missing from Spotify). If the connector fallback was used instead, say the playlist is generated and unverified.
 
 ## Step 5: feedback loop
 
@@ -222,6 +234,17 @@ Run `python scripts/lastfm.py discover --store <working dir> --needed <n>` for t
 - On the next run, or when asked what landed, call `user.getrecenttracks` with `from=<playlist date>`. An artist is a hit at `hit_threshold` or more plays. Report hits and misses.
 - Hits become seeds with `hit_bonus`. Artists the user explicitly rejects are excluded for good (stored in the rejected list).
 - **Limitation:** this loop detects re-listens only through Last.fm scrobbles. Re-listening that happens only in Spotify and is not scrobbled is invisible. A "miss" therefore means "no scrobbled plays", not "not liked", and a miss never triggers an automatic rejection.
+
+## External pools (Discovery, on request)
+
+Runs when the user asks for hidden gems, deep cuts, obscure music, or picks from music communities, critics or forums. Last.fm similarity favors artists that already have listeners; external pools reach artists that Last.fm similarity rarely surfaces.
+
+- Sources, in order of reliability from this environment:
+  - Bandcamp Daily (daily.bandcamp.com): reachable with curl. Article index pages list links; each article embeds players whose `data-player-infos` attribute holds JSON with `artist` and `track_title`. Use the Hidden Gems section and the monthly genre roundups that match the user's cluster tags, last 24 months.
+  - Rate Your Music esoteric charts (`/charts/esoteric/album/all-time/g:<genre-slug>/`): the chart that weights rating against popularity, so it lists highly rated albums with few ratings. RYM blocks non-browser clients, so it needs the user's browser extension; without it, skip RYM and say so in one line. Fetch one genre per request; map the user's top cluster tags to RYM genre slugs. Run long fetch loops in the page without awaiting them, then poll, because a single script call times out after about 45 seconds; return results in small chunks, because tool output is truncated.
+  - Reddit: its API requires prior approval and limits non-commercial access to moderation, and the browser extension does not open reddit.com. Use web search only, for threads and yearly best-of lists in subreddits that match the cluster; treat it as a minor source.
+- Filter every gathered name exactly like Discovery candidates: not in the user-known set, `userplaycount` 0 via `artist.getinfo` with `username`, global listeners within the band or its lower half, then `artist.getsimilar` intersected with user-known artists (weight each hit by match x log(1 + user plays)); require at least 3 user-known similar artists. Tag fit is not required. Run Step 1b on finalists.
+- Store the unused survivors in `external_pool.json`. Reply table adds a source column.
 
 ## Mode: Forgotten
 
@@ -279,9 +302,9 @@ Off by default (`features.time_patterns.enabled = false` in the profile). It sta
 
 **Spotify.**
 
-- `generate_playlist` errors or returns no playlist URI: tell the user plainly that playlist creation failed and quote the error. Deliver the track table anyway so nothing is lost. Do not retry automatically, because the playlist may exist server-side and a retry would create a duplicate. Do not use `search` or any other tool as a workaround. The user can say "retry".
-- `save_to_library` fails: retry once (it is safe to repeat). If it still fails, say the playlist exists in Spotify but is not saved to the library, and give the URI and the track table.
-- Connector unavailable: say so and deliver the track table.
+- `spotify.py` token error (`not_authorized`, or `invalid_grant` on refresh, usually after 6 months or a lost `spotify.json`): send a fresh `auth-url` link and ask the user to approve again. Deliver the track table meanwhile.
+- `fill` exits 2 or `readback_matches` is false: run `read`, report what the playlist actually holds, and fix it with another `fill --playlist <id>` (it replaces the contents, so a repeat is safe). Never create a second playlist for the same list.
+- Connector fallback: `generate_playlist` errors or returns no URI → report it, deliver the table, do not retry automatically. `save_to_library` fails → retry once, then give the URI. Connector unavailable → deliver the table.
 
 ## One question per turn
 
@@ -300,6 +323,7 @@ Off by default (`features.time_patterns.enabled = false` in the profile). It sta
 - v0.1: access and methods.
 - v0.2: discovery pipeline (user-known set, seeds, similarity scoring, support threshold, popularity band), Spotify playlists, feedback loop.
 - v0.3: Last.fm does not see Spotify likes. Added per-finalist checks, self-reported lists, the real Spotify connector limits (generative playlists, mandatory save to library).
+- v0.9 (2026-11-17): the connector's `generate_playlist` produced an empty playlist for a list of rare artists, and no connector tool could read or fix it. Playlists now go through the Spotify Web API (`scripts/spotify.py`, PKCE, user's own app) with exact track lists and readback. Persistent store moved to a Drive folder with write-new-then-trash updates, because the rotating Spotify refresh token must persist. Added External pools (Bandcamp Daily, RYM esoteric charts, Reddit via web search) for hidden-gem requests.
 - v0.8 (2026-10-06): `lastfm.py` honours Retry-After on HTTP 429, adds jitter to backoff, retries HTTP 5xx, and stops at once on other 4xx and non-transient Last.fm codes. Unit tests in `tests/`.
 - v0.7 (2026-10-06): renamed to Unheard. First-run onboarding for non-technical users: plain-language guide to getting a Last.fm API key, `setup` command that validates and saves credentials, specific fixes for each setup error.
 - v0.6 (2026-10-06): after the first live playlist, Spotify added a known artist (not in the requested list). Rules now say the verified table is the deliverable, claims about playlist contents are forbidden, and the reply must warn that known artists may appear.
